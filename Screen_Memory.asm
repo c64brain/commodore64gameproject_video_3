@@ -1,0 +1,457 @@
+;===============================================================================
+;                                                               SCREEN ROUTINES
+;===============================================================================
+;                                                            Peter 'Sig' Hewett
+;                                                                   - 2016/2017
+;-------------------------------------------------------------------------------
+;                                                               SWAP SCREENS
+;-------------------------------------------------------------------------------
+; Exchange the front and backbuffer screens
+;-------------------------------------------------------------------------------
+#region "SwapScreens"
+SwapScreens
+        lda CURRENT_SCREEN + 1             ; load hi byte of current screen
+        cmp #>SCREEN2_MEM
+        beq @screen2 
+
+        loadPointer CURRENT_SCREEN, SCREEN2_MEM
+        loadPointer CURRENT_BUFFER, SCREEN1_MEM
+        rts
+
+@screen2 
+        loadPointer CURRENT_SCREEN, SCREEN1_MEM
+        loadPointer CURRENT_BUFFER, SCREEN2_MEM
+        rts
+
+#endregion
+;===================================================================================================
+;                                                                      FETCH PLAYFIELD LINE ADDRESS
+;===================================================================================================
+; A helper routine to return the line address for the current front screen only. A cut back version
+; of FetchLineAddress for faster use with sprite/character collisions it also uses the Y register
+; instead of the X as that is tied up in our collision routines to hold the sprite number
+;
+; Y = line number
+; Returns : ZEROPAGE_POINTER_1 = screen line address
+; Modifies A
+;---------------------------------------------------------------------------------------------------
+#region "FetchPlayfieldLineAddress"
+FetchPlayfieldLineAddress
+        lda CURRENT_SCREEN + 1          ; load HI byte of curren screen address
+        cmp #>SCREEN1_MEM               ; compare it to the HI byte of SCREEN1_MEM
+        beq @screen1                    ; if it's equal - it's screen1 
+                                        ; otherwise it's screen2
+ 
+        lda SCREEN2_LINE_OFFSET_TABLE_LO,y      ; Use Y to lookup the address and save it in
+        sta ZEROPAGE_POINTER_1                  ; ZEROPAGE_POINTER_1
+        lda SCREEN2_LINE_OFFSET_TABLE_HI,y
+        sta ZEROPAGE_POINTER_1 + 1
+        rts
+
+@screen1
+        lda SCREEN1_LINE_OFFSET_TABLE_LO,y      ; Use Y to lookup the address and save it in
+        sta ZEROPAGE_POINTER_1                  ; ZEROPAGE_POINTER_1
+        lda SCREEN1_LINE_OFFSET_TABLE_HI,y
+        sta ZEROPAGE_POINTER_1 + 1
+        rts
+#endregion
+;-------------------------------------------------------------------------------
+;                                                           FETCH LINE ADDRESS
+;-------------------------------------------------------------------------------
+; A helper routine to return the line address for the correct screen to draw to
+; Given the screen base in WPARAM1, and the line in X (Y coord) we test
+; the high byte in WPARAM1 and use the correct lookup table to get the line
+; address, returning it in ZEROPAGE_POINTER_1
+
+; An additional 'jump in' point "FetchScreenLineAddress" can be used that will
+; only consider the CURRENT_SCREEN pointer, likewise "FetchBufferLineAddress"
+; will jump in and substitute the current buffer.
+;
+; X - Line required
+;
+; returns ZEROPAGE_POINTER_1
+;
+; Modifies A
+;
+;-------------------------------------------------------------------------------
+#region "GetLineAddress"
+
+GetScreenLineAddress
+        lda CURRENT_SCREEN + 1
+        jmp detectScreen
+
+FetchBufferLineAddress
+        lda CURRENT_BUFFER + 1
+
+detectScreen
+        cmp #>SCREEN1_MEM
+        beq @screen1
+        cmp #>SCREEN2_MEM
+        beq @screen2
+                                        ; if none of the above, it will default to Screen1
+
+@screen1
+        lda SCREEN1_LINE_OFFSET_TABLE_LO,x
+        sta ZEROPAGE_POINTER_1
+        lda SCREEN1_LINE_OFFSET_TABLE_HI,x
+        sta ZEROPAGE_POINTER_1 + 1
+        rts
+@screen2
+        lda SCREEN2_LINE_OFFSET_TABLE_LO,x
+        sta ZEROPAGE_POINTER_1
+        lda SCREEN2_LINE_OFFSET_TABLE_HI,x
+        sta ZEROPAGE_POINTER_1 + 1
+        rts
+
+#endRegion
+
+;-------------------------------------------------------------------------------
+;                                                               CLEAR SCREEN
+;-------------------------------------------------------------------------------
+; As these routines were originally written for speed and simplicity. The
+; Best way to redo them for multi-screens would be to split them into seperate
+; routines for each screen and one for color. Wpuld probably be smaller than a
+; one routine for all screens approach too.
+;
+; Clears the screen using a chosen character.
+; A = Character/Color to clear the screen with
+;
+; Modifies X
+;-------------------------------------------------------------------------------
+#region "ClearScreen0"
+
+ClearScreen1
+        ldx #$00
+@clearLoop
+        sta SCREEN1_MEM,x
+        sta SCREEN1_MEM + 250,x
+        sta SCREEN1_MEM + 500,x                 ; Game screen only goes to 720
+        sta SCREEN1_MEM + 750,x
+        inx
+        cpx #250
+        bne @clearLoop
+        rts
+#endregion
+
+#region "ClearScreen1" 
+ClearScreen2
+        ldx #$00
+@clearLoop
+        sta SCREEN2_MEM,x
+        sta SCREEN2_MEM + 250,x
+        sta SCREEN2_MEM + 500,x                 ; Game screen only goes to 720
+        sta SCREEN2_MEM + 750,x
+        inx
+        cpx #250
+        bne @clearloop
+
+        rts
+#endregion
+
+#region "ClearColorRam"
+ClearColorRam
+        ldx #$00
+@clearLoop
+        sta COLOR_MEM,x
+        sta COLOR_MEM + 250,x
+        sta COLOR_MEM + 500,x
+        sta COLOR_MEM + 750,x
+        inx
+        cpx #250
+        bne @clearLoop
+
+        rts
+#endregion
+
+;-------------------------------------------------------------------------------
+;                                                         COPY TO BUFFER (SLOW)
+;-------------------------------------------------------------------------------
+; NOTE : Don't use this for scrolling. Use the unrolled version in scrolling.asm
+; this is just for setup purposes. It takes the current front screen and copys
+; it to the buffer
+;--------------------------------------------------------------------------------
+#region CopyToBuffer
+CopyToBuffer
+
+@copy_screen1
+        ldx #$00
+@loop1
+        lda SCREEN1_MEM,x
+        sta SCREEN2_MEM,x
+
+        lda SCREEN1_MEM + 250,x
+        sta SCREEN2_MEM + 250,x
+        
+        lda SCREEN1_MEM + 500,x
+        sta SCREEN2_MEM + 500,x
+
+        lda SCREEN1_MEM + 750,x                 ; Game screen only goes to 720
+        sta SCREEN2_MEM + 750,x
+        
+        inx
+        cpx #250
+        bne @loop1
+
+        rts
+
+#endregion
+;-------------------------------------------------------------------------------
+;                                                         DRAW VERTICAL LINE
+;-------------------------------------------------------------------------------
+; DrawVLine - draws a vertical line with a specified color and character.
+;             it's not optimized or terribly pretty but it lets you reuse your
+;             PARAM variables to draw another line straight away
+;
+; PARAM1 = start X
+; PARAM2 = start Y
+; PARAM3 = end Y
+; PARAM4 = character
+; PARAM5 = color
+;-------------------------------------------------------------------------------
+#region "DrawVLine"
+
+DrawVLine
+        ldx PARAM2                              ; fetch the start address in X (Y coord)
+        ldy PARAM1                              ; setup Y register for column (X coord)
+@loop
+        lda SCREEN_LINE_OFFSET_TABLE_LO,x       ; Fetch the address of the start line and
+        sta ZEROPAGE_POINTER_1                  ; store it in ZEROPAGE_POINTER_1
+        sta ZEROPAGE_POINTER_2                  ; ZEROPAGE_POINTER_2 will hold the color address
+        lda SCREEN_LINE_OFFSET_TABLE_HI,x
+        sta ZEROPAGE_POINTER_1 + 1
+
+        clc
+        adc #>COLOR_DIFF                        ; add the difference to color memory
+        sta ZEROPAGE_POINTER_2 + 1              ; ZEROPAGE_POINTER_2 now has the correct address
+
+        lda PARAM4                              ; load the character
+        sta (ZEROPAGE_POINTER_1),y              ; write the character to the screen position
+        lda PARAM5                              ; load the color
+        sta (ZEROPAGE_POINTER_2),Y              ; write it to color ram
+
+        inx
+        clc                                     ; increment X
+        cpx PARAM3                              ; check against the end position
+        bcc @loop                               ; if not equal - loop back
+        
+        rts
+
+#endregion
+;-------------------------------------------------------------------------------
+;                                                         DRAW HORIZONTAL LINE
+;-------------------------------------------------------------------------------
+; DrawVLine - draws a horizontal line with a specified color and character.
+;             it's not optimized or terribly pretty but it lets you reuse your
+;             PARAM variables to draw another line straight away
+;
+; PARAM1 = start X
+; PARAM2 = start Y
+; PARAM3 = end X
+; PARAM4 = character
+; PARAM5 = color
+;-------------------------------------------------------------------------------
+#region "DrawHLine"
+
+DrawHLine
+        ldx PARAM2                      ; load the Y coordinate for the lookup tables
+        ldy PARAM1                      ; start X coord in Y register
+
+@loop
+        lda SCREEN_LINE_OFFSET_TABLE_LO,x       ; load the screen line address
+        sta ZEROPAGE_POINTER_1
+        sta ZEROPAGE_POINTER_2                  ; fetch the low byte for the color address
+        lda SCREEN_LINE_OFFSET_TABLE_HI,x
+        sta ZEROPAGE_POINTER_1 + 1
+
+        clc
+        adc #>COLOR_DIFF                ; add the difference to color ram
+        sta ZEROPAGE_POINTER_2 + 1
+
+        lda PARAM4
+        sta (ZEROPAGE_POINTER_1),y
+        lda PARAM5
+        sta (ZEROPAGE_POINTER_2),y
+
+        iny                             ; increment y (our X coordinate
+        clc
+        cpy PARAM3                      ; compare it to PARAM3 - end X coordinate
+        bcc @loop                       ; if less than, loop back
+
+        rts
+#endregion        
+
+; Screen Line Offset Tables
+; Query a line with lda (POINTER TO TABLE),x (where x holds the line number)
+; and it will return the screen address for that line
+
+; C64 PRG STUDIO has a lack of expression support that makes creating some tables very problematic
+; Be aware that you can only use ONE expression after a defined constant, no braces, and be sure to
+; account for order of precedence.
+
+; For these tables you MUST have the Operator Calc directive set at the top of your main file
+; or have it checked in options or BAD THINGS WILL HAPPEN!! It basically means that calculations
+; will be performed BEFORE giving back the hi/lo byte with '>' rather than the default of
+; hi/lo byte THEN the calculation
+SCREEN_LINE_OFFSET_TABLE_LO                                            
+SCREEN1_LINE_OFFSET_TABLE_LO        
+          byte <SCREEN_MEM                      
+          byte <SCREEN_MEM + 40                 
+          byte <SCREEN_MEM + 80
+          byte <SCREEN_MEM + 120
+          byte <SCREEN_MEM + 160
+          byte <SCREEN_MEM + 200
+          byte <SCREEN_MEM + 240
+          byte <SCREEN_MEM + 280
+          byte <SCREEN_MEM + 320
+          byte <SCREEN_MEM + 360
+          byte <SCREEN_MEM + 400
+          byte <SCREEN_MEM + 440
+          byte <SCREEN_MEM + 480
+          byte <SCREEN_MEM + 520
+          byte <SCREEN_MEM + 560
+          byte <SCREEN_MEM + 600
+          byte <SCREEN_MEM + 640
+          byte <SCREEN_MEM + 680
+          byte <SCREEN_MEM + 720
+          byte <SCREEN_MEM + 760
+          byte <SCREEN_MEM + 800
+          byte <SCREEN_MEM + 840
+          byte <SCREEN_MEM + 880
+          byte <SCREEN_MEM + 920
+          byte <SCREEN_MEM + 960
+
+SCREEN_LINE_OFFSET_TABLE_HI
+SCREEN1_LINE_OFFSET_TABLE_HI
+          byte >SCREEN_MEM
+          byte >SCREEN_MEM + 40
+          byte >SCREEN_MEM + 80
+          byte >SCREEN_MEM + 120
+          byte >SCREEN_MEM + 160
+          byte >SCREEN_MEM + 200
+          byte >SCREEN_MEM + 240
+          byte >SCREEN_MEM + 280
+          byte >SCREEN_MEM + 320
+          byte >SCREEN_MEM + 360
+          byte >SCREEN_MEM + 400
+          byte >SCREEN_MEM + 440
+          byte >SCREEN_MEM + 480
+          byte >SCREEN_MEM + 520
+          byte >SCREEN_MEM + 560
+          byte >SCREEN_MEM + 600
+          byte >SCREEN_MEM + 640
+          byte >SCREEN_MEM + 680
+          byte >SCREEN_MEM + 720
+          byte >SCREEN_MEM + 760
+          byte >SCREEN_MEM + 800
+          byte >SCREEN_MEM + 840
+          byte >SCREEN_MEM + 880
+          byte >SCREEN_MEM + 920
+          byte >SCREEN_MEM + 960
+
+SCREEN2_LINE_OFFSET_TABLE_LO        
+          byte <SCREEN2_MEM                     
+          byte <SCREEN2_MEM + 40                 
+          byte <SCREEN2_MEM + 80
+          byte <SCREEN2_MEM + 120
+          byte <SCREEN2_MEM + 160
+          byte <SCREEN2_MEM + 200
+          byte <SCREEN2_MEM + 240
+          byte <SCREEN2_MEM + 280
+          byte <SCREEN2_MEM + 320
+          byte <SCREEN2_MEM + 360
+          byte <SCREEN2_MEM + 400
+          byte <SCREEN2_MEM + 440
+          byte <SCREEN2_MEM + 480
+          byte <SCREEN2_MEM + 520
+          byte <SCREEN2_MEM + 560
+          byte <SCREEN2_MEM + 600
+          byte <SCREEN2_MEM + 640
+          byte <SCREEN2_MEM + 680
+          byte <SCREEN2_MEM + 720
+          byte <SCREEN2_MEM + 760
+          byte <SCREEN2_MEM + 800
+          byte <SCREEN2_MEM + 840
+          byte <SCREEN2_MEM + 880
+          byte <SCREEN2_MEM + 920
+          byte <SCREEN2_MEM + 960
+
+SCREEN2_LINE_OFFSET_TABLE_HI
+          byte >SCREEN2_MEM
+          byte >SCREEN2_MEM + 40
+          byte >SCREEN2_MEM + 80
+          byte >SCREEN2_MEM + 120
+          byte >SCREEN2_MEM + 160
+          byte >SCREEN2_MEM + 200
+          byte >SCREEN2_MEM + 240
+          byte >SCREEN2_MEM + 280
+          byte >SCREEN2_MEM + 320
+          byte >SCREEN2_MEM + 360
+          byte >SCREEN2_MEM + 400
+          byte >SCREEN2_MEM + 440
+          byte >SCREEN2_MEM + 480
+          byte >SCREEN2_MEM + 520
+          byte >SCREEN2_MEM + 560
+          byte >SCREEN2_MEM + 600
+          byte >SCREEN2_MEM + 640
+          byte >SCREEN2_MEM + 680
+          byte >SCREEN2_MEM + 720
+          byte >SCREEN2_MEM + 760
+          byte >SCREEN2_MEM + 800
+          byte >SCREEN2_MEM + 840
+          byte >SCREEN2_MEM + 880
+          byte >SCREEN2_MEM + 920
+          byte >SCREEN2_MEM + 960
+                                                  
+COLOR_LINE_OFFSET_TABLE_LO        
+          byte <COLOR_MEM                      
+          byte <COLOR_MEM + 40                 
+          byte <COLOR_MEM + 80
+          byte <COLOR_MEM + 120
+          byte <COLOR_MEM + 160
+          byte <COLOR_MEM + 200
+          byte <COLOR_MEM + 240
+          byte <COLOR_MEM + 280
+          byte <COLOR_MEM + 320
+          byte <COLOR_MEM + 360
+          byte <COLOR_MEM + 400
+          byte <COLOR_MEM + 440
+          byte <COLOR_MEM + 480
+          byte <COLOR_MEM + 520
+          byte <COLOR_MEM + 560
+          byte <COLOR_MEM + 600
+          byte <COLOR_MEM + 640
+          byte <COLOR_MEM + 680
+          byte <COLOR_MEM + 720
+          byte <COLOR_MEM + 760
+          byte <COLOR_MEM + 800
+          byte <COLOR_MEM + 840
+          byte <COLOR_MEM + 880
+          byte <COLOR_MEM + 920
+          byte <COLOR_MEM + 960
+
+COLOR_LINE_OFFSET_TABLE_HI
+          byte >COLOR_MEM
+          byte >COLOR_MEM + 40
+          byte >COLOR_MEM + 80
+          byte >COLOR_MEM + 120
+          byte >COLOR_MEM + 160
+          byte >COLOR_MEM + 200
+          byte >COLOR_MEM + 240
+          byte >COLOR_MEM + 280
+          byte >COLOR_MEM + 320
+          byte >COLOR_MEM + 360
+          byte >COLOR_MEM + 400
+          byte >COLOR_MEM + 440
+          byte >COLOR_MEM + 480
+          byte >COLOR_MEM + 520
+          byte >COLOR_MEM + 560
+          byte >COLOR_MEM + 600
+          byte >COLOR_MEM + 640
+          byte >COLOR_MEM + 680
+          byte >COLOR_MEM + 720
+          byte >COLOR_MEM + 760
+          byte >COLOR_MEM + 800
+          byte >COLOR_MEM + 840
+          byte >COLOR_MEM + 880
+          byte >COLOR_MEM + 920
+          byte >COLOR_MEM + 960
